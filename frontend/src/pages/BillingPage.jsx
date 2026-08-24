@@ -595,7 +595,7 @@ export default function BillingPage({ woodTypes = [], onOpenRates }) {
     }
   };
 
-  // WhatsApp Share strictly as PDF Document file
+  // WhatsApp Share with Direct Unsaved Number Chat & PDF Download
   const handleWhatsAppPdfShare = async (targetOrder = null) => {
     try {
       setIsGeneratingPdf(true);
@@ -610,50 +610,88 @@ export default function BillingPage({ woodTypes = [], onOpenRates }) {
 
       const billNum = targetOrder ? (targetOrder.bill_no || '').replace(/^INV-/, '').replace(/^RK-/, '') : (invoiceNo || '').replace(/^INV-/, '').replace(/^RK-/, '');
       const custName = targetOrder ? (targetOrder.customer_name || 'Valued Customer') : (customerName || 'Valued Customer');
-      let phoneNum = targetOrder ? targetOrder.customer_phone : customerPhone;
+      const phoneNum = targetOrder ? targetOrder.customer_phone : customerPhone;
       const filename = `Invoice_${billNum}_${custName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
 
       if (!invoiceCanvasRef.current) {
         throw new Error('Invoice canvas element not found');
       }
 
-      // 1. Generate exact A4 PDF document file
+      // Generate the exact A4 PDF from the canvas
       const { blob } = await generateInvoicePdf(invoiceCanvasRef.current, filename);
       const pdfFile = new File([blob], filename, { type: 'application/pdf' });
 
-      // 2. Resolve customer's phone number if available
-      let rawPhone = (phoneNum || '').trim();
-      let phoneClean = rawPhone.replace(/\D/g, '');
-      if (phoneClean.startsWith('0') && phoneClean.length === 11) phoneClean = phoneClean.slice(1);
-      const validPhone = phoneClean.length === 10 
-        ? `91${phoneClean}` 
-        : (phoneClean.length === 12 && phoneClean.startsWith('91') ? phoneClean : (phoneClean.length >= 10 ? phoneClean : ''));
+      // Clean & Format Phone Number for direct unsaved number WhatsApp chat
+      const rawPhone = String(phoneNum || '').trim();
+      let cleanPhone = rawPhone.replace(/\D/g, '');
+      if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+        cleanPhone = cleanPhone.slice(1);
+      }
+      const validPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : (cleanPhone.length > 10 ? cleanPhone : '');
 
-      // 3. Primary Mobile Share: Sends the actual PDF document file directly into WhatsApp
-      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-        try {
-          await navigator.share({
-            files: [pdfFile],
-            title: `Tax Invoice #${billNum}`
-          });
-          setSaveSuccessMsg(`PDF Invoice #${billNum} shared directly to WhatsApp!`);
-          setTimeout(() => setSaveSuccessMsg(''), 4000);
-          return;
-        } catch (shareErr) {
-          if (shareErr.name === 'AbortError') return;
-        }
+      // Generate formatted Tax Invoice WhatsApp text
+      let waText = `*R.K. WOOD INDUSTRIES*\n`;
+      waText += `*Tax Invoice:* ${billNum}\n`;
+      waText += `*Date:* ${formatPrintDate(targetOrder?.order_date || invoiceDate)}\n`;
+      waText += `*Customer:* ${custName}\n`;
+      if (phoneNum) waText += `*Phone:* ${phoneNum}\n`;
+      
+      const gstinVal = customerGstin || (targetOrder?.notes?.match(/GSTIN:\s*([^,]+)/)?.[1]);
+      if (gstinVal && gstinVal !== 'N/A') waText += `*GSTIN:* ${gstinVal}\n`;
+      waText += `--------------------------------\n`;
+
+      const invoiceItems = (targetOrder?.items && targetOrder.items.length > 0) 
+        ? targetOrder.items 
+        : items.filter(it => it.description && it.description.trim());
+
+      if (invoiceItems && invoiceItems.length > 0) {
+        waText += `*PARTICULARS:*\n`;
+        invoiceItems.forEach((it, idx) => {
+          const desc = it.description || it.wood_type || 'Wood Item';
+          const qty = it.qty || it.pcs || 1;
+          const unit = it.unit || 'Nos';
+          const rate = parseFloat(it.rate || it.rate_per_cft || 0);
+          const amt = ((parseFloat(qty) || 0) * rate).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+          waText += `${idx + 1}. ${desc} (${qty} ${unit} @ ₹${rate}) = ₹${amt}\n`;
+        });
+        waText += `--------------------------------\n`;
       }
 
-      // 4. Desktop / Fallback: Download PDF document and open direct WhatsApp chat to customer number
-      downloadBlob(blob, filename);
-      const waUrl = validPhone 
-        ? `https://api.whatsapp.com/send?phone=${validPhone}` 
-        : `https://web.whatsapp.com/`;
-      
-      window.open(waUrl, '_blank');
+      const totalVal = targetOrder ? parseFloat(targetOrder.grand_total || 0) : grandTotal;
+      waText += `*GRAND TOTAL:* ₹${totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}\n\n`;
+      waText += `_Thank you for your business!_ 🙏\n`;
+      waText += `*R.K. WOOD INDUSTRIES* | Ankleshwar`;
 
-      setSaveSuccessMsg(`PDF Invoice "${filename}" downloaded! Attach it in WhatsApp.`);
-      setTimeout(() => setSaveSuccessMsg(''), 6000);
+      // Automatically download the PDF to device
+      downloadBlob(blob, filename);
+
+      // Open WhatsApp chat directly to the unsaved/unknown customer phone number
+      if (validPhone) {
+        const waUrl = `https://wa.me/${validPhone}?text=${encodeURIComponent(waText)}`;
+        window.open(waUrl, '_blank');
+        setSaveSuccessMsg(`Opening WhatsApp for +${validPhone} & downloaded PDF!`);
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+      } else {
+        if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+          try {
+            await navigator.share({
+              files: [pdfFile],
+              title: filename,
+              text: waText
+            });
+            setSaveSuccessMsg(`Invoice #${billNum} shared via share sheet!`);
+            setTimeout(() => setSaveSuccessMsg(''), 4000);
+          } catch (shareErr) {
+            if (shareErr.name !== 'AbortError') {
+              window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank');
+            }
+          }
+        } else {
+          window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank');
+          setSaveSuccessMsg(`PDF "${filename}" downloaded! Choose contact in WhatsApp.`);
+          setTimeout(() => setSaveSuccessMsg(''), 5000);
+        }
+      }
     } catch (err) {
       console.error('PDF WhatsApp Share error:', err);
       alert('Error generating PDF: ' + err.message);

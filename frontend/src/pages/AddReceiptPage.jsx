@@ -562,7 +562,7 @@ export default function AddReceiptPage({ woodTypes = [] }) {
     }
   };
 
-  // Share a saved receipt on WhatsApp strictly as a PDF file document
+  // Share a saved receipt on WhatsApp directly to customer's WhatsApp chat (supports unsaved/unknown customer numbers)
   const handleWhatsAppShareReceipt = async (rec) => {
     try {
       setIsGeneratingPdf(true);
@@ -578,52 +578,89 @@ export default function AddReceiptPage({ woodTypes = [] }) {
         const cleanCust = (rec.customer_name || 'Customer').replace(/[^a-zA-Z0-9_-]/g, '_');
         const filename = `Receipt_${cleanBill}_${cleanCust}.pdf`;
 
-        // 1. Generate the exact official PDF document file
         const { blob } = await generateInvoicePdf(hiddenVoucherRef.current, filename);
         const pdfFile = new File([blob], filename, { type: 'application/pdf' });
 
-        // 2. Resolve customer's phone number if available
-        let rawPhone = (rec.customer_phone || '').trim();
+        // Clean & Format Phone Number for WhatsApp direct chat
+        const rawPhone = String(rec.customer_phone || '').trim();
         let phoneClean = rawPhone.replace(/\D/g, '');
-        if (phoneClean.startsWith('0') && phoneClean.length === 11) phoneClean = phoneClean.slice(1);
-        const validPhone = phoneClean.length === 10 
-          ? `91${phoneClean}` 
-          : (phoneClean.length === 12 && phoneClean.startsWith('91') ? phoneClean : (phoneClean.length >= 10 ? phoneClean : ''));
+        if (phoneClean.startsWith('0') && phoneClean.length === 11) {
+          phoneClean = phoneClean.slice(1);
+        }
+        const validPhone = phoneClean.length === 10 ? `91${phoneClean}` : (phoneClean.length > 10 ? phoneClean : '');
 
-        // 3. Primary Mobile Share: Sends the actual PDF document file directly into WhatsApp
-        if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-          try {
-            await navigator.share({
-              files: [pdfFile],
-              title: `Payment Receipt #${rec.bill_no}`
-            });
-            setToastMsg(`PDF Receipt #${rec.bill_no} shared directly to WhatsApp!`);
-            setIsGeneratingPdf(false);
-            setActivePdfReceipt(null);
-            return;
-          } catch (shareErr) {
-            if (shareErr.name === 'AbortError') {
-              setIsGeneratingPdf(false);
-              setActivePdfReceipt(null);
-              return;
+        // Generate complete WhatsApp receipt text summary
+        let waText = `*R.K. WOOD INDUSTRIES*\n`;
+        waText += `*Payment Receipt:* ${rec.bill_no}\n`;
+        waText += `*Date:* ${rec.order_date || new Date().toISOString().split('T')[0]}\n`;
+        waText += `*Customer:* ${rec.customer_name || 'Valued Customer'}\n`;
+        if (rec.customer_phone) waText += `*Phone:* ${rec.customer_phone}\n`;
+        waText += `--------------------------------\n`;
+
+        if (Array.isArray(rec.items) && rec.items.length > 0) {
+          waText += `*WOODEN SIZES & VOLUMES:*\n`;
+          rec.items.forEach((it, idx) => {
+            const w = it.width_in || '-';
+            const t = it.thickness_in || '-';
+            const l = it.length_ft || '-';
+            const pcs = it.pcs || 1;
+            const cft = parseFloat(it.total_cft || 0).toFixed(3);
+            const amt = parseFloat(it.total_amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+            waText += `${idx + 1}. ${it.wood_type || 'Wood'}: ${l}' x ${w}" x ${t}" (${pcs} pcs) = ${cft} CFT (₹${amt})\n`;
+          });
+          waText += `--------------------------------\n`;
+        }
+
+        waText += `*Total Volume:* ${parseFloat(rec.total_cft || 0).toFixed(3)} CFT\n`;
+        if (parseFloat(rec.cutting_charges || 0) > 0) {
+          waText += `*Cutting Charges:* +₹${parseFloat(rec.cutting_charges).toLocaleString('en-IN')}\n`;
+        }
+        if (parseFloat(rec.transport_charges || 0) > 0) {
+          waText += `*Transport Charges:* +₹${parseFloat(rec.transport_charges).toLocaleString('en-IN')}\n`;
+        }
+        if (parseFloat(rec.discount || 0) > 0) {
+          waText += `*Discount:* -₹${parseFloat(rec.discount).toLocaleString('en-IN')}\n`;
+        }
+        waText += `*GRAND TOTAL:* ₹${parseFloat(rec.grand_total || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}\n`;
+        waText += `*Payment Status:* ${rec.payment_status || 'Paid'}\n\n`;
+        waText += `_Thank you for your business!_ 🙏\n`;
+        waText += `*R.K. WOOD INDUSTRIES* | Ankleshwar`;
+
+        // Automatically download the PDF receipt so it is ready on device
+        downloadBlob(blob, filename);
+
+        // Open WhatsApp chat directly to the unsaved/unknown customer phone number
+        if (validPhone) {
+          const waUrl = `https://wa.me/${validPhone}?text=${encodeURIComponent(waText)}`;
+          window.open(waUrl, '_blank');
+          setToastMsg(`Opening WhatsApp for +${validPhone} & downloaded PDF slip!`);
+        } else {
+          // If no phone number was entered, check for mobile share sheet fallback or general WhatsApp
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            try {
+              await navigator.share({
+                files: [pdfFile],
+                title: filename,
+                text: waText
+              });
+              setToastMsg(`Receipt #${rec.bill_no} shared via share sheet!`);
+            } catch (shareErr) {
+              if (shareErr.name !== 'AbortError') {
+                window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank');
+              }
             }
+          } else {
+            window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank');
+            setToastMsg(`PDF Receipt "${filename}" downloaded! Choose contact in WhatsApp.`);
           }
         }
 
-        // 4. Desktop / Fallback: Download the PDF document and open direct WhatsApp chat to customer number
-        downloadBlob(blob, filename);
-        const waUrl = validPhone 
-          ? `https://api.whatsapp.com/send?phone=${validPhone}` 
-          : `https://web.whatsapp.com/`;
-        window.open(waUrl, '_blank');
-
-        setToastMsg(`PDF Receipt "${filename}" downloaded! Attach it in WhatsApp.`);
         setIsGeneratingPdf(false);
         setActivePdfReceipt(null);
-      }, 300);
+      }, 350);
     } catch (err) {
       console.error('WhatsApp error:', err);
-      alert('Failed to generate receipt PDF for WhatsApp: ' + err.message);
+      alert('Failed to generate receipt for WhatsApp: ' + err.message);
       setIsGeneratingPdf(false);
       setActivePdfReceipt(null);
     }

@@ -31,28 +31,10 @@ export default function ReceiptModal({
   };
 
   const handleWhatsAppShare = () => {
-    let rawPhone = (customerPhone || '').trim();
-    if (!rawPhone) {
-      rawPhone = window.prompt(`Enter customer WhatsApp number for Receipt #${billNo}:`, '') || '';
-    }
-
-    let phoneClean = rawPhone.replace(/\D/g, '');
-    if (phoneClean.startsWith('0') && phoneClean.length === 11) {
-      phoneClean = phoneClean.slice(1);
-    }
-    const validPhone = phoneClean.length === 10 
-      ? `91${phoneClean}` 
-      : (phoneClean.length === 12 && phoneClean.startsWith('91') ? phoneClean : (phoneClean.length >= 10 ? phoneClean : ''));
-
-    let text = `🧾 *R.K. WOOD INDUSTRIES - CASH RECEIPT*\n`;
-    text += `📍 Ankleshwar | 📞 9879810196 / 9377510359\n`;
-    text += `------------------------------------\n`;
+    let text = `*R.K. WOOD INDUSTRIES*\n`;
     text += `*Receipt No:* ${billNo}\n`;
     text += `*Date:* ${orderDate}\n`;
-    text += `*Customer:* ${(customerName || 'Valued Customer').toUpperCase()}\n`;
-    if (rawPhone) text += `*Mobile:* ${rawPhone}\n`;
-    text += `*Payment Status:* ${paymentStatus || 'Paid'}\n`;
-    text += `------------------------------------\n`;
+    text += `*Customer:* ${customerName || 'Valued Customer'}\n\n`;
     text += `*WOODEN SIZES & VOLUMES:*\n`;
 
     items.forEach((item, idx) => {
@@ -64,23 +46,25 @@ export default function ReceiptModal({
       const itemCft = ((lengthFt * widthIn * thicknessIn) / 144) * pcs;
       const itemAmt = itemCft * rate;
 
-      text += `${idx + 1}. *${item.wood_type || 'Wood'}*: ${lengthFt}' × ${widthIn}" × ${thicknessIn}" (${pcs} pcs) = ${itemCft.toFixed(3)} CFT @ ₹${rate} = *₹${itemAmt.toFixed(2)}*\n`;
+      text += `${idx + 1}. ${item.wood_type || 'Wood'}: ${lengthFt}' x ${widthIn}" x ${thicknessIn}" (${pcs} pcs) = ${itemCft.toFixed(3)} CFT @ ₹${rate} = ₹${itemAmt.toFixed(2)}\n`;
     });
 
-    text += `------------------------------------\n`;
-    text += `*Total Volume:* ${totalCft.toFixed(3)} CFT\n`;
-    text += `*Wood Subtotal:* ₹${subtotalAmount.toFixed(2)}\n`;
-    if (parseFloat(cuttingCharges) > 0) text += `*Cutting Charges:* +₹${parseFloat(cuttingCharges).toFixed(2)}\n`;
-    if (parseFloat(transportCharges) > 0) text += `*Transport:* +₹${parseFloat(transportCharges).toFixed(2)}\n`;
+    text += `\n*Total Volume:* ${totalCft.toFixed(3)} CFT\n`;
+    text += `*Subtotal:* ₹${subtotalAmount.toFixed(2)}\n`;
+    if (parseFloat(cuttingCharges) > 0) text += `*Cutting Charges:* ₹${parseFloat(cuttingCharges).toFixed(2)}\n`;
+    if (parseFloat(transportCharges) > 0) text += `*Transport:* ₹${parseFloat(transportCharges).toFixed(2)}\n`;
     if (parseFloat(discount) > 0) text += `*Discount:* -₹${parseFloat(discount).toFixed(2)}\n`;
-    text += `*GRAND TOTAL:* *₹${grandTotal.toFixed(2)}*/-\n`;
-    text += `------------------------------------\n`;
-    text += `Thank you for your business! 🙏\n*R.K. WOOD INDUSTRIES*`;
+    text += `*GRAND TOTAL:* ₹${grandTotal.toFixed(2)}\n`;
+    text += `*Status:* ${paymentStatus}\n\n`;
+    text += `Thank you for your business! 🙏`;
 
-    const encodedText = encodeURIComponent(text);
-    const url = validPhone 
-      ? `https://api.whatsapp.com/send?phone=${validPhone}&text=${encodedText}` 
-      : `https://api.whatsapp.com/send?text=${encodedText}`;
+    const rawPhone = customerPhone ? String(customerPhone).trim() : '';
+    let cleanPhone = rawPhone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+      cleanPhone = cleanPhone.slice(1);
+    }
+    const phoneParam = cleanPhone.length === 10 ? `91${cleanPhone}` : (cleanPhone.length > 10 ? cleanPhone : '');
+    const url = phoneParam ? `https://wa.me/${phoneParam}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
   };
 
