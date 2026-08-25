@@ -1,16 +1,11 @@
 {
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
-  "installCommand": "npm --prefix frontend install",
-  "functions": {
-    "api/*.php": {
-      "runtime": "vercel-php@0.7.3"
-    }
-  },
+  "installCommand": "npm --prefix frontend install && npm install",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/api/:name.php",
+      "destination": "/api/:name"
     },
     {
       "source": "/((?!api).*)",

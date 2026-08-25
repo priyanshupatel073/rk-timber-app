@@ -6,5 +6,8 @@
     "dev": "npm --prefix frontend run dev -- --host",
     "build": "npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.2"
   }
 }
