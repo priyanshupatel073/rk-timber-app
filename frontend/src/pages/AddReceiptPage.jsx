@@ -264,9 +264,21 @@ export default function AddReceiptPage({ woodTypes = [] }) {
         const dbReceiptNos = new Set(quickReceiptsFromDb.map(o => o.bill_no));
         const combined = [...quickReceiptsFromDb];
 
+        // Auto-sync any local-only receipts to cloud database so other devices (e.g. Dad's device) can see them
         for (const loc of localReceipts) {
           if (!dbReceiptNos.has(loc.bill_no)) {
-            combined.push(loc);
+            try {
+              const syncPayload = { ...loc, id: null };
+              const syncRes = await apiService.saveOrder(syncPayload);
+              if (syncRes && syncRes.success && syncRes.data) {
+                combined.push(syncRes.data);
+                dbReceiptNos.add(syncRes.data.bill_no);
+              } else {
+                combined.push(loc);
+              }
+            } catch (syncErr) {
+              combined.push(loc);
+            }
           }
         }
 

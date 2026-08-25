@@ -169,11 +169,25 @@ export default function DailyRetailPage() {
       if (Array.isArray(list)) {
         const dbDates = new Set(list.map(r => r.entry_date));
         const combined = [...list];
+
+        // Auto-sync any local-only records to cloud database so other devices (e.g. Dad's device) can see them
         for (const loc of localDaily) {
           if (!dbDates.has(loc.entry_date)) {
-            combined.push(loc);
+            try {
+              const syncPayload = { ...loc, id: null };
+              const syncRes = await apiService.saveDailyRetail(syncPayload);
+              if (syncRes && syncRes.success && syncRes.data) {
+                combined.push(syncRes.data);
+                dbDates.add(syncRes.data.entry_date);
+              } else {
+                combined.push(loc);
+              }
+            } catch (syncErr) {
+              combined.push(loc);
+            }
           }
         }
+
         combined.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
         setHistoryList(combined);
         saveStoredDaily(combined);
