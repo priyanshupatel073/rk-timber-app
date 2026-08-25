@@ -106,18 +106,18 @@ export default function DashboardPage({ onNavigate, onNewOrder, onSelectOrder })
       });
 
       const localDailySub = dailyDebitTotal - dailyCreditTotal;
-      const finalDailyAmount = (apiData && apiData.daily_retail_amount !== undefined && apiData.daily_retail_amount !== 0)
+      const finalDailyAmount = (apiData && apiData.daily_retail_amount !== undefined)
         ? apiData.daily_retail_amount
         : localDailySub;
-      const finalDailyDays = (apiData && apiData.daily_retail_days) ? apiData.daily_retail_days : monthDaily.length;
+      const finalDailyDays = (apiData && apiData.daily_retail_days !== undefined) 
+        ? apiData.daily_retail_days 
+        : monthDaily.length;
 
-      // 2. Quick Receipts (Deduplicate by bill_no across DB and LocalStorage)
+      // 2. Quick Receipts
       const receiptsLocal = JSON.parse(localStorage.getItem('rk_timber_saved_receipts') || '[]');
       const monthReceiptsLocal = receiptsLocal.filter(r => isDateInMonth(r.order_date || r.created_at, targetMonth));
 
       const receiptMap = new Map();
-
-      // Add local receipts
       monthReceiptsLocal.forEach(r => {
         const key = (r.bill_no || `rcp-${r.id}`).toUpperCase().trim();
         receiptMap.set(key, {
@@ -126,15 +126,17 @@ export default function DashboardPage({ onNavigate, onNewOrder, onSelectOrder })
         });
       });
 
-      // Sum all unique quick receipts
       let totalLocalQuickAmount = 0;
       receiptMap.forEach(rec => {
         totalLocalQuickAmount += rec.amount;
       });
 
-      const apiQuickAmount = (apiData && typeof apiData.quick_receipts_amount === 'number') ? apiData.quick_receipts_amount : 0;
-      const finalQuickAmount = Math.max(totalLocalQuickAmount, apiQuickAmount);
-      const finalQuickCount = Math.max(receiptMap.size, (apiData && apiData.quick_receipts_count) || 0);
+      const finalQuickAmount = (apiData && typeof apiData.quick_receipts_amount === 'number') 
+        ? apiData.quick_receipts_amount 
+        : totalLocalQuickAmount;
+      const finalQuickCount = (apiData && typeof apiData.quick_receipts_count === 'number') 
+        ? apiData.quick_receipts_count 
+        : receiptMap.size;
 
       // 3. GST Bills
       const invoicesLocal = JSON.parse(localStorage.getItem('rk_timber_saved_invoices') || '[]');
@@ -144,9 +146,13 @@ export default function DashboardPage({ onNavigate, onNewOrder, onSelectOrder })
         !(i.bill_no || '').startsWith('RCP-')
       );
       const localGstTotal = monthGst.reduce((sum, i) => sum + (parseFloat(i.grand_total) || 0), 0);
-      const apiGstAmount = (apiData && typeof apiData.gst_bills_amount === 'number') ? apiData.gst_bills_amount : 0;
-      const finalGstAmount = Math.max(localGstTotal, apiGstAmount);
-      const finalGstCount = Math.max(monthGst.length, (apiData && apiData.gst_bills_count) || 0);
+
+      const finalGstAmount = (apiData && typeof apiData.gst_bills_amount === 'number') 
+        ? apiData.gst_bills_amount 
+        : localGstTotal;
+      const finalGstCount = (apiData && typeof apiData.gst_bills_count === 'number') 
+        ? apiData.gst_bills_count 
+        : monthGst.length;
 
       // 4. Grand Combined Total
       const totalCombined = finalDailyAmount + finalQuickAmount + finalGstAmount;

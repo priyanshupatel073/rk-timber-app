@@ -196,24 +196,6 @@ export default function BillingPage({ woodTypes = [], onOpenRates }) {
       if (Array.isArray(allDbData)) {
         // Filter strictly Timber Billing Tax Invoices (exclude Quick Receipts RCP-)
         const dbData = allDbData.filter(o => !o.bill_no || !o.bill_no.startsWith('RCP-'));
-        const dbBillNos = new Set(dbData.map(o => o.bill_no));
-
-        // Auto-sync any local-only invoices directly into MySQL
-        for (const loc of localInvoices) {
-          if (!loc.bill_no?.startsWith('RCP-') && !dbBillNos.has(loc.bill_no)) {
-            try {
-              const syncPayload = { ...loc, id: null };
-              const syncRes = await apiService.saveOrder(syncPayload);
-              if (syncRes && syncRes.success && syncRes.data) {
-                dbData.push(syncRes.data);
-                dbBillNos.add(syncRes.data.bill_no);
-              }
-            } catch (syncErr) {
-              console.warn("Auto-sync invoice to DB failed:", syncErr);
-            }
-          }
-        }
-
         dbData.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
         setSavedOrders(dbData);
         saveStoredInvoices(dbData);

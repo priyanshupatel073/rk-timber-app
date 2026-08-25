@@ -167,30 +167,9 @@ export default function DailyRetailPage() {
     try {
       const list = await apiService.getDailyRetailList();
       if (Array.isArray(list)) {
-        const dbDates = new Set(list.map(r => r.entry_date));
-        const combined = [...list];
-
-        // Auto-sync any local-only records to cloud database so other devices (e.g. Dad's device) can see them
-        for (const loc of localDaily) {
-          if (!dbDates.has(loc.entry_date)) {
-            try {
-              const syncPayload = { ...loc, id: null };
-              const syncRes = await apiService.saveDailyRetail(syncPayload);
-              if (syncRes && syncRes.success && syncRes.data) {
-                combined.push(syncRes.data);
-                dbDates.add(syncRes.data.entry_date);
-              } else {
-                combined.push(loc);
-              }
-            } catch (syncErr) {
-              combined.push(loc);
-            }
-          }
-        }
-
-        combined.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
-        setHistoryList(combined);
-        saveStoredDaily(combined);
+        list.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
+        setHistoryList(list);
+        saveStoredDaily(list);
       }
     } catch (e) {
       console.warn("Could not fetch daily retail history:", e);
@@ -237,12 +216,15 @@ export default function DailyRetailPage() {
         );
         setNotes(data.notes || '');
         persistSingleDayLocal(data);
-      } else if (!cached) {
-        // Fresh date with no existing data anywhere
+      } else {
+        // Record does not exist in DB (e.g. deleted from another device or fresh date)
         setActiveRecordId(null);
         setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
         setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
         setNotes('');
+        const cleaned = getStoredDaily().filter(r => r.entry_date !== date);
+        saveStoredDaily(cleaned);
+        setHistoryList(cleaned);
       }
     } catch (e) {
       console.warn("Load date background fetch error:", e);

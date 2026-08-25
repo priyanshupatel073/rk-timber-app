@@ -194,6 +194,18 @@ export default async function handler(req, res) {
           }
         }
 
+        if (!orderId && billNo) {
+          const [byBill] = await connection.query('SELECT id FROM orders WHERE bill_no = ?', [billNo]);
+          if (byBill.length > 0) {
+            orderId = byBill[0].id;
+            await connection.query(
+              `UPDATE orders SET customer_name = ?, customer_phone = ?, customer_address = ?, order_date = ?, total_cft = ?, subtotal = ?, cutting_charges = ?, transport_charges = ?, tax_percent = ?, discount = ?, grand_total = ?, notes = ?, payment_status = ? WHERE id = ?`,
+              [customerName, customerPhone, customerAddress, orderDate, totalCft, subtotal, cuttingCharges, transportCharges, taxPercent, discount, grandTotal, notes, paymentStatus, orderId]
+            );
+            await connection.query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
+          }
+        }
+
         if (!orderId) {
           billNo = billNo || `RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
           const [insertRes] = await connection.query(
@@ -235,9 +247,20 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      const id = parseInt(req.query.id, 10);
-      if (!id) return res.status(400).json({ status: 'error', message: 'Order ID is required' });
-      await pool.query('DELETE FROM orders WHERE id = ?', [id]);
+      const id = req.query.id && parseInt(req.query.id, 10) < 10000000000 ? parseInt(req.query.id, 10) : null;
+      const billNo = req.query.bill_no ? String(req.query.bill_no).trim() : null;
+
+      if (!id && !billNo) {
+        return res.status(400).json({ status: 'error', message: 'Order ID or Bill No is required' });
+      }
+
+      if (id) {
+        await pool.query('DELETE FROM orders WHERE id = ?', [id]);
+      }
+      if (billNo) {
+        await pool.query('DELETE FROM orders WHERE bill_no = ?', [billNo]);
+      }
+
       return res.status(200).json({ status: 'success', message: 'Order deleted successfully' });
     }
 

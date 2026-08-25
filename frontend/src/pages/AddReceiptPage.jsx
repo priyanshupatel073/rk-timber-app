@@ -261,30 +261,9 @@ export default function AddReceiptPage({ woodTypes = [] }) {
           o => (o.bill_no && o.bill_no.startsWith('RCP-')) || (o.notes && o.notes.includes('Quick Receipt'))
         );
 
-        const dbReceiptNos = new Set(quickReceiptsFromDb.map(o => o.bill_no));
-        const combined = [...quickReceiptsFromDb];
-
-        // Auto-sync any local-only receipts to cloud database so other devices (e.g. Dad's device) can see them
-        for (const loc of localReceipts) {
-          if (!dbReceiptNos.has(loc.bill_no)) {
-            try {
-              const syncPayload = { ...loc, id: null };
-              const syncRes = await apiService.saveOrder(syncPayload);
-              if (syncRes && syncRes.success && syncRes.data) {
-                combined.push(syncRes.data);
-                dbReceiptNos.add(syncRes.data.bill_no);
-              } else {
-                combined.push(loc);
-              }
-            } catch (syncErr) {
-              combined.push(loc);
-            }
-          }
-        }
-
-        combined.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
-        setSavedReceipts(combined);
-        saveStoredReceipts(combined);
+        quickReceiptsFromDb.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
+        setSavedReceipts(quickReceiptsFromDb);
+        saveStoredReceipts(quickReceiptsFromDb);
       }
     } catch (e) {
       console.warn("API fetch fallback for quick receipts:", e);
@@ -540,9 +519,7 @@ export default function AddReceiptPage({ woodTypes = [] }) {
     setToastMsg(`Receipt #${rec.bill_no} deleted successfully.`);
 
     try {
-      if (rec.id && typeof rec.id === 'number' && rec.id < 10000000000) {
-        await apiService.deleteOrder(rec.id);
-      }
+      await apiService.deleteOrder(rec.id, rec.bill_no);
     } catch (e) {
       console.warn("Delete order backend sync:", e);
     }

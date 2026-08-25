@@ -95,8 +95,12 @@ export const apiService = {
     });
   },
 
-  async deleteOrder(id) {
-    return await request(`orders.php?id=${id}`, {
+  async deleteOrder(id, billNo = '') {
+    const params = [];
+    if (id && typeof id === 'number' && id < 10000000000) params.push(`id=${id}`);
+    if (billNo) params.push(`bill_no=${encodeURIComponent(billNo)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : `?id=${id}`;
+    return await request(`orders.php${query}`, {
       method: 'DELETE'
     });
   },
@@ -143,9 +147,12 @@ export const apiService = {
     });
   },
 
-  async deleteDailyRetail(id, date) {
-    const param = id ? `id=${id}` : `date=${encodeURIComponent(date)}`;
-    return await request(`daily_retail.php?${param}`, {
+  async deleteDailyRetail(id, date = '') {
+    const params = [];
+    if (id && typeof id === 'number' && id < 10000000000) params.push(`id=${id}`);
+    if (date) params.push(`date=${encodeURIComponent(date)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : (id ? `?id=${id}` : `?date=${encodeURIComponent(date)}`);
+    return await request(`daily_retail.php${query}`, {
       method: 'DELETE'
     });
   },

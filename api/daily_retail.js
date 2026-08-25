@@ -90,14 +90,16 @@ export default async function handler(req, res) {
 
     if (req.method === 'DELETE') {
       const { id, date } = req.query;
-      if (id) {
-        await pool.query('DELETE FROM daily_retail WHERE id = ?', [parseInt(id, 10)]);
-        return res.status(200).json({ status: 'success', message: 'Daily retail entry deleted.' });
-      } else if (date) {
-        await pool.query('DELETE FROM daily_retail WHERE entry_date = ?', [date]);
-        return res.status(200).json({ status: 'success', message: `Daily retail entry for ${date} deleted.` });
+      if (!id && !date) {
+        return res.status(400).json({ status: 'error', message: 'ID or Date is required for delete.' });
       }
-      return res.status(400).json({ status: 'error', message: 'ID or Date is required for delete.' });
+      if (id && parseInt(id, 10) < 10000000000) {
+        await pool.query('DELETE FROM daily_retail WHERE id = ?', [parseInt(id, 10)]);
+      }
+      if (date) {
+        await pool.query('DELETE FROM daily_retail WHERE entry_date = ?', [date]);
+      }
+      return res.status(200).json({ status: 'success', message: 'Daily retail entry deleted successfully.' });
     }
 
     return res.status(405).json({ status: 'error', message: 'Method not allowed' });
