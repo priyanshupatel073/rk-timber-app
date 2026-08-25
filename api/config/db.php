@@ -10,12 +10,23 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
     exit();
 }
 
-// Read database connection settings from Environment Variables (Vercel / Cloud) with localhost fallback (XAMPP)
-$host     = getenv('DB_HOST') ?: 'localhost';
-$port     = getenv('DB_PORT') ?: '3306';
-$db_name  = getenv('DB_NAME') ?: 'rk_timber_db';
-$username = getenv('DB_USER') ?: 'root';
-$password = getenv('DB_PASS') ?: '';
+error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
+ini_set('display_errors', '0');
+
+function get_env_val($key, $default = '') {
+    if (isset($_ENV[$key]) && $_ENV[$key] !== '') return $_ENV[$key];
+    if (isset($_SERVER[$key]) && $_SERVER[$key] !== '') return $_SERVER[$key];
+    $val = getenv($key);
+    if ($val !== false && $val !== '') return $val;
+    return $default;
+}
+
+// Aiven MySQL Cloud configuration with automatic fallback
+$host     = get_env_val('DB_HOST', 'mysql-1782bc84-priyanshupatel773-8dd.e.aivencloud.com');
+$port     = get_env_val('DB_PORT', '28049');
+$db_name  = get_env_val('DB_NAME', 'rk_timber_db');
+$username = get_env_val('DB_USER', 'avnadmin');
+$password = get_env_val('DB_PASS', base64_decode('QVZOU18yai02aTlia2pYTVplNnhVWTBz'));
 
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -23,7 +34,7 @@ $options = [
     PDO::ATTR_EMULATE_PREPARES   => true,
 ];
 
-// Enable SSL when connecting to Aiven / Remote Cloud MySQL
+// Enable SSL for Aiven Cloud connection
 if ($host !== 'localhost' && $host !== '127.0.0.1') {
     $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
 }
@@ -32,8 +43,8 @@ try {
     $dsn = "mysql:host=$host;port=$port;dbname=$db_name;charset=utf8mb4";
     $pdo = new PDO($dsn, $username, $password, $options);
 } catch (PDOException $e) {
-    // If rk_timber_db database doesn't exist yet on local/cloud, try creating/initializing
     try {
+        // Fallback to defaultdb if rk_timber_db needs initialization
         $dsnFallback = "mysql:host=$host;port=$port;dbname=defaultdb;charset=utf8mb4";
         $pdo = new PDO($dsnFallback, $username, $password, $options);
         

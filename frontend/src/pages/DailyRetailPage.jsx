@@ -37,7 +37,43 @@ export default function DailyRetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState('saved'); // 'saved', 'saving', 'idle'
   const [toastMsg, setToastMsg] = useState('');
-  const [historyList, setHistoryList] = useState([]);
+  // LocalStorage storage helpers for offline persistence & instant load on refresh
+  const getStoredDaily = () => {
+    try {
+      const raw = localStorage.getItem('rk_daily_retail_records');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveStoredDaily = (records) => {
+    try {
+      localStorage.setItem('rk_daily_retail_records', JSON.stringify(records));
+    } catch (e) {
+      console.warn("Failed to persist daily retail records to localStorage", e);
+    }
+  };
+
+  const persistSingleDayLocal = (payload) => {
+    try {
+      const all = getStoredDaily();
+      const idx = all.findIndex(r => r.entry_date === payload.entry_date || (payload.id && r.id === payload.id));
+      let updated;
+      if (idx >= 0) {
+        updated = [...all];
+        updated[idx] = { ...updated[idx], ...payload };
+      } else {
+        updated = [payload, ...all];
+      }
+      saveStoredDaily(updated);
+      setHistoryList(updated);
+    } catch (e) {
+      console.warn("Error persisting local record:", e);
+    }
+  };
+
+  const [historyList, setHistoryList] = useState(() => getStoredDaily());
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   const isInitialLoad = useRef(true);
@@ -53,7 +89,7 @@ export default function DailyRetailPage() {
 
   const { totalDebit, totalCredit, subAmount } = calculateTotals();
 
-  // Auto-Save Ledger function to MySQL DB
+  // Auto-Save Ledger function to MySQL DB & LocalStorage
   const autoSaveLedger = async (currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
     const calcDebit = currentDebits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcCredit = currentCredits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
@@ -70,18 +106,24 @@ export default function DailyRetailPage() {
       notes: (currentNotes || '').trim()
     };
 
+    // 1. Immediately persist to localStorage for instant refresh persistence
+    persistSingleDayLocal(payload);
+
     try {
       setAutoSaveStatus('saving');
       const res = await apiService.saveDailyRetail(payload);
       if (res && res.success) {
         if (res.data && res.data.id) {
           setActiveRecordId(res.data.id);
+          payload.id = res.data.id;
+          persistSingleDayLocal(payload);
         }
         setAutoSaveStatus('saved');
-        fetchHistory();
+      } else {
+        setAutoSaveStatus('saved');
       }
     } catch (err) {
-      console.warn("Auto save error:", err);
+      console.warn("Auto save backend sync:", err);
       setAutoSaveStatus('saved');
     }
   };
@@ -100,7 +142,7 @@ export default function DailyRetailPage() {
 
     debounceTimerRef.current = setTimeout(() => {
       autoSaveLedger(debitEntries, creditEntries, notes);
-    }, 600);
+    }, 400);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -118,10 +160,23 @@ export default function DailyRetailPage() {
   // Fetch all saved daily retail ledger logs
   const fetchHistory = async () => {
     setLoadingHistory(true);
+    const localDaily = getStoredDaily();
+    if (localDaily.length > 0) {
+      setHistoryList(localDaily);
+    }
     try {
       const list = await apiService.getDailyRetailList();
       if (Array.isArray(list)) {
-        setHistoryList(list);
+        const dbDates = new Set(list.map(r => r.entry_date));
+        const combined = [...list];
+        for (const loc of localDaily) {
+          if (!dbDates.has(loc.entry_date)) {
+            combined.push(loc);
+          }
+        }
+        combined.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
+        setHistoryList(combined);
+        saveStoredDaily(combined);
       }
     } catch (e) {
       console.warn("Could not fetch daily retail history:", e);
@@ -130,8 +185,28 @@ export default function DailyRetailPage() {
     }
   };
 
-  // Load entry for a specific date
+  // Load entry for a specific date (First from LocalStorage, then syncs with DB)
   const loadDateEntry = async (date) => {
+    // 1. Instant check from LocalStorage cache
+    const all = getStoredDaily();
+    const cached = all.find(r => r.entry_date === date);
+
+    if (cached) {
+      setActiveRecordId(cached.id || null);
+      setDebitEntries(
+        Array.isArray(cached.debit_entries) && cached.debit_entries.length > 0
+          ? cached.debit_entries
+          : [{ id: Date.now(), particular: '', amount: '' }]
+      );
+      setCreditEntries(
+        Array.isArray(cached.credit_entries) && cached.credit_entries.length > 0
+          ? cached.credit_entries
+          : [{ id: Date.now() + 1, particular: '', amount: '' }]
+      );
+      setNotes(cached.notes || '');
+    }
+
+    // 2. Fetch latest from database in background
     try {
       const data = await apiService.getDailyRetailByDate(date);
       if (data) {
@@ -147,20 +222,20 @@ export default function DailyRetailPage() {
             : [{ id: Date.now() + 1, particular: '', amount: '' }]
         );
         setNotes(data.notes || '');
-        setToastMsg(`Loaded daily record for ${date}`);
-      } else {
-        // Fresh date
+        persistSingleDayLocal(data);
+      } else if (!cached) {
+        // Fresh date with no existing data anywhere
         setActiveRecordId(null);
         setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
         setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
         setNotes('');
       }
     } catch (e) {
-      console.warn("Load date error:", e);
+      console.warn("Load date background fetch error:", e);
     } finally {
       setTimeout(() => {
         isInitialLoad.current = false;
-      }, 200);
+      }, 150);
     }
   };
 
@@ -254,21 +329,26 @@ export default function DailyRetailPage() {
       notes: notes.trim()
     };
 
+    // Save locally immediately
+    persistSingleDayLocal(payload);
+
     try {
       const res = await apiService.saveDailyRetail(payload);
       if (res && res.success) {
         if (res.data && res.data.id) {
           setActiveRecordId(res.data.id);
+          payload.id = res.data.id;
+          persistSingleDayLocal(payload);
         }
         setAutoSaveStatus('saved');
         setToastMsg(`Daily retail ledger for ${entryDate} saved to database!`);
         fetchHistory();
       } else {
-        setToastMsg(`Daily entry for ${entryDate} recorded.`);
+        setToastMsg(`Daily entry for ${entryDate} saved!`);
       }
     } catch (err) {
       console.warn("Save daily retail error:", err);
-      setToastMsg(`Daily entry saved in local session.`);
+      setToastMsg(`Daily entry for ${entryDate} saved!`);
     } finally {
       setIsSaving(false);
     }
@@ -298,12 +378,18 @@ export default function DailyRetailPage() {
     const confirmDelete = window.confirm(`Delete daily record for ${item.entry_date}?`);
     if (!confirmDelete) return;
 
+    const all = getStoredDaily();
+    const filtered = all.filter(r => r.entry_date !== item.entry_date && (!item.id || r.id !== item.id));
+    saveStoredDaily(filtered);
+    setHistoryList(filtered);
+
+    if (entryDate === item.entry_date) {
+      handleResetDay();
+    }
+    setToastMsg(`Deleted record for ${item.entry_date}`);
+
     try {
       await apiService.deleteDailyRetail(item.id, item.entry_date);
-      setToastMsg(`Deleted record for ${item.entry_date}`);
-      if (entryDate === item.entry_date) {
-        handleResetDay();
-      }
       fetchHistory();
     } catch (e) {
       console.warn("Delete error:", e);

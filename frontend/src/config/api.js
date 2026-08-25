@@ -3,25 +3,34 @@
 async function request(endpoint, options = {}) {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
   
-  // Try relative proxy endpoint first (works on localhost & mobile LAN via Vite dev server)
+  // Try relative endpoint first (works on Vercel, localhost & Vite proxy)
   try {
     const res = await fetch(`/api/${cleanEndpoint}`, options);
     if (res.ok) {
       const data = await res.json();
       return { success: true, ...data };
+    } else {
+      try {
+        const errData = await res.json();
+        return { success: false, ...errData };
+      } catch (e) {
+        // Non-JSON response
+      }
     }
   } catch (err) {
-    // Fallback to direct Apache URL using dynamic hostname
-    try {
-      const host = window.location.hostname || 'localhost';
-      const directUrl = `http://${host}/RK%20APP/api/${cleanEndpoint}`;
-      const resDirect = await fetch(directUrl, options);
-      if (resDirect.ok) {
-        const data = await resDirect.json();
-        return { success: true, ...data };
+    // Only attempt direct Apache localhost URL if running on local environment
+    const host = window.location.hostname || '';
+    if (host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.')) {
+      try {
+        const directUrl = `http://${host}/RK%20APP/api/${cleanEndpoint}`;
+        const resDirect = await fetch(directUrl, options);
+        if (resDirect.ok) {
+          const data = await resDirect.json();
+          return { success: true, ...data };
+        }
+      } catch (directErr) {
+        console.warn(`Local fallback to ${cleanEndpoint} failed:`, directErr);
       }
-    } catch (directErr) {
-      console.warn(`API request to ${cleanEndpoint} failed:`, directErr);
     }
   }
 
