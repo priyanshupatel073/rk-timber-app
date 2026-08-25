@@ -10,32 +10,35 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
     exit();
 }
 
-$host = 'localhost';
-$db_name = 'rk_timber_db';
-$username = 'root';
-$password = '';
+// Read database connection settings from Environment Variables (Vercel / Cloud) with localhost fallback (XAMPP)
+$host     = getenv('DB_HOST') ?: 'localhost';
+$port     = getenv('DB_PORT') ?: '3306';
+$db_name  = getenv('DB_NAME') ?: 'rk_timber_db';
+$username = getenv('DB_USER') ?: 'root';
+$password = getenv('DB_PASS') ?: '';
+
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => true,
+];
+
+// Enable SSL when connecting to Aiven / Remote Cloud MySQL
+if ($host !== 'localhost' && $host !== '127.0.0.1') {
+    $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
+}
 
 try {
-    // Connect directly to rk_timber_db
-    $pdo = new PDO("mysql:host=$host;dbname=$db_name;charset=utf8mb4", $username, $password, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => true
-    ]);
+    $dsn = "mysql:host=$host;port=$port;dbname=$db_name;charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password, $options);
 } catch (PDOException $e) {
-    // If DB doesn't exist, try creating and initializing
+    // If rk_timber_db database doesn't exist yet on local/cloud, try creating/initializing
     try {
-        $pdoRoot = new PDO("mysql:host=$host;charset=utf8mb4", $username, $password, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_EMULATE_PREPARES => true
-        ]);
-        $pdoRoot->exec("CREATE DATABASE IF NOT EXISTS `$db_name` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $dsnFallback = "mysql:host=$host;port=$port;dbname=defaultdb;charset=utf8mb4";
+        $pdo = new PDO($dsnFallback, $username, $password, $options);
         
-        $pdo = new PDO("mysql:host=$host;dbname=$db_name;charset=utf8mb4", $username, $password, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => true
-        ]);
+        $pdo->exec("CREATE DATABASE IF NOT EXISTS `$db_name` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $pdo->exec("USE `$db_name`");
 
         $schemaFile = __DIR__ . '/../../database/schema.sql';
         if (file_exists($schemaFile)) {
@@ -45,9 +48,8 @@ try {
     } catch (PDOException $ex) {
         http_response_code(500);
         echo json_encode([
-            "status" => "error",
-            "message" => "Database connection failed: " . $ex->getMessage(),
-            "hint" => "Please check if XAMPP MySQL is started."
+            "status"  => "error",
+            "message" => "Database connection failed: " . $ex->getMessage()
         ]);
         exit();
     }
