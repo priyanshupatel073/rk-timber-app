@@ -4,11 +4,11 @@
   "installCommand": "npm --prefix frontend install && npm install",
   "rewrites": [
     {
-      "source": "/api/:name.php",
-      "destination": "/api/:name"
+      "source": "/api/:match*.php",
+      "destination": "/api/:match*"
     },
     {
-      "source": "/((?!api).*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
