@@ -266,6 +266,7 @@ export default function AddReceiptPage({ woodTypes = [] }) {
 
   const fetchSavedReceipts = async () => {
     setLoadingHistory(true);
+    // Snapshot local data FIRST so we never lose it
     const localReceipts = getStoredReceipts();
     if (localReceipts.length > 0) {
       setSavedReceipts(localReceipts);
@@ -279,11 +280,23 @@ export default function AddReceiptPage({ woodTypes = [] }) {
         );
 
         quickReceiptsFromDb.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
-        setSavedReceipts(quickReceiptsFromDb);
-        saveStoredReceipts(quickReceiptsFromDb);
+
+        if (quickReceiptsFromDb.length > 0) {
+          // DB has receipts — DB is authoritative, use it
+          setSavedReceipts(quickReceiptsFromDb);
+          saveStoredReceipts(quickReceiptsFromDb);
+        } else if (localReceipts.length === 0) {
+          // DB confirmed empty AND local is also empty — truly no records
+          setSavedReceipts([]);
+          saveStoredReceipts([]);
+        }
+        // If DB returned 0 RCP records but local has some:
+        // DO NOT overwrite — DB may be slow, save may be in-flight, or connection issue.
+        // Keep showing local data until DB confirms the records.
       }
     } catch (e) {
       console.warn("API fetch fallback for quick receipts:", e);
+      // On error, keep whatever local state was set above
     } finally {
       setLoadingHistory(false);
     }
@@ -478,12 +491,14 @@ export default function AddReceiptPage({ woodTypes = [] }) {
       if (res && res.success && res.data && res.data.id) {
         const finalId = res.data.id;
         setEditingReceiptId(finalId);
+        // Update the local record's id to match the real DB id
         const syncedList = updatedList.map(o => o.bill_no === currentReceiptNo ? { ...o, id: finalId } : o);
         saveStoredReceipts(syncedList);
         setSavedReceipts(syncedList);
       }
-      // Always refresh from DB after save so view mode is in sync
-      fetchSavedReceipts();
+      // NOTE: Do NOT call fetchSavedReceipts() here — it creates a race condition
+      // where the DB fetch may return before the insert is visible, wipe local state.
+      // Local state is already correct from the setSavedReceipts(updatedList) above.
     } catch (err) {
       console.log("Database sync offline, quick receipt recorded locally.");
     } finally {
