@@ -180,9 +180,34 @@ export default function BillingPage({ woodTypes = [], onOpenRates }) {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
 
-  // Fetch saved orders on mount (merging MySQL with Local Storage and auto-syncing)
+  // Multi-device real-time sync for Timber Invoices (Poll every 8s + sync on tab focus or screen unlock)
   useEffect(() => {
     fetchSavedOrders();
+
+    const pollTimer = setInterval(() => {
+      if (!document.hidden) {
+        fetchSavedOrders();
+      }
+    }, 8000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSavedOrders();
+      }
+    };
+
+    const handleFocus = () => {
+      fetchSavedOrders();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   const fetchSavedOrders = async () => {

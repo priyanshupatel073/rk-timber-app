@@ -259,9 +259,34 @@ export default function AddReceiptPage({ woodTypes = [] }) {
   const [activePdfReceipt, setActivePdfReceipt] = useState(null);
   const hiddenVoucherRef = useRef(null);
 
-  // Fetch only Quick Receipts (strictly separate from Timber Billing invoices)
+  // Multi-device real-time sync for Quick Receipts (Poll every 8s + sync on tab focus or screen unlock)
   useEffect(() => {
     fetchSavedReceipts();
+
+    const pollTimer = setInterval(() => {
+      if (!document.hidden) {
+        fetchSavedReceipts();
+      }
+    }, 8000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSavedReceipts();
+      }
+    };
+
+    const handleFocus = () => {
+      fetchSavedReceipts();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   const fetchSavedReceipts = async () => {

@@ -139,6 +139,7 @@ export default function DailyRetailPage() {
 
   const isInitialLoad = useRef(true);
   const debounceTimerRef = useRef(null);
+  const isSyncingFromDbRef = useRef(false);
 
   // Calculations
   const calculateTotals = () => {
@@ -201,7 +202,7 @@ export default function DailyRetailPage() {
 
   // Debounced auto-save whenever debitEntries, creditEntries, or notes change
   useEffect(() => {
-    if (isInitialLoad.current) {
+    if (isInitialLoad.current || isSyncingFromDbRef.current) {
       return;
     }
 
@@ -227,6 +228,61 @@ export default function DailyRetailPage() {
     fetchHistory();
     loadDateEntry(entryDate);
   }, []);
+
+  // Multi-device real-time sync: Auto-poll every 7s + instant sync on tab focus or screen unlock
+  useEffect(() => {
+    const syncCloudData = () => {
+      // Don't poll if user is actively typing in an input
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
+        return;
+      }
+      if (document.hidden) {
+        return;
+      }
+      fetchHistory();
+      loadDateEntry(entryDate);
+    };
+
+    const pollTimer = setInterval(syncCloudData, 7000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchHistory();
+        loadDateEntry(entryDate);
+      }
+    };
+
+    const handleFocus = () => {
+      fetchHistory();
+      loadDateEntry(entryDate);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [entryDate]);
+
+  // Manual trigger to force-sync latest entries across all devices immediately
+  const handleSyncAll = async () => {
+    setLoadingHistory(true);
+    setAutoSaveStatus('saving');
+    try {
+      await fetchHistory();
+      await loadDateEntry(entryDate);
+      setToastMsg('Synced latest cloud entries across all devices ✓');
+    } catch (e) {
+      console.warn("Sync error:", e);
+    } finally {
+      setLoadingHistory(false);
+      setAutoSaveStatus('saved');
+    }
+  };
 
   // Fetch all saved daily retail ledger logs (Non-destructive merge)
   const fetchHistory = async () => {
@@ -317,10 +373,14 @@ export default function DailyRetailPage() {
           ? data.credit_entries
           : (cachedCreditValid ? cached.credit_entries : (Array.isArray(data.credit_entries) && data.credit_entries.length > 0 ? data.credit_entries : [{ id: Date.now() + 1, particular: '', amount: '' }]));
 
+        isSyncingFromDbRef.current = true;
         setActiveRecordId(data.id || null);
         setDebitEntries(debitsToUse);
         setCreditEntries(creditsToUse);
         setNotes(data.notes !== undefined ? (data.notes || '') : (cached ? cached.notes : ''));
+        setTimeout(() => {
+          isSyncingFromDbRef.current = false;
+        }, 500);
 
         persistSingleDayLocal({
           id: data.id || null,
@@ -623,6 +683,17 @@ export default function DailyRetailPage() {
               />
             </div>
 
+            <button 
+              type="button" 
+              className="btn btn-secondary btn-sm"
+              onClick={handleSyncAll}
+              disabled={loadingHistory}
+              title="Sync latest entries across all devices from cloud"
+              style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: '#FFFFFF', color: '#1E293B', borderColor: '#CBD5E1' }}
+            >
+              <RefreshCw size={14} className={loadingHistory ? 'spin' : ''} />
+              <span>{loadingHistory ? 'Syncing...' : 'Sync Devices'}</span>
+            </button>
 
             <button 
               type="button" 
@@ -942,12 +1013,12 @@ export default function DailyRetailPage() {
           <button 
             type="button" 
             className="btn btn-secondary btn-sm"
-            onClick={fetchHistory}
-            title="Refresh History"
+            onClick={handleSyncAll}
+            title="Refresh and sync latest entries across all devices"
             style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           >
             <RefreshCw size={14} className={loadingHistory ? 'spin' : ''} />
-            <span>Refresh</span>
+            <span>Sync</span>
           </button>
         </div>
 
