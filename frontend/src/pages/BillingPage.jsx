@@ -221,9 +221,16 @@ export default function BillingPage({ woodTypes = [], onOpenRates }) {
       if (Array.isArray(allDbData)) {
         // Filter strictly Timber Billing Tax Invoices (exclude Quick Receipts RCP-)
         const dbData = allDbData.filter(o => !o.bill_no || !o.bill_no.startsWith('RCP-'));
-        dbData.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
-        setSavedOrders(dbData);
-        saveStoredInvoices(dbData);
+        const dbBillNos = new Set(dbData.map(o => o.bill_no));
+        const combined = [...dbData];
+        for (const loc of localInvoices) {
+          if (loc.bill_no && !loc.bill_no.startsWith('RCP-') && !dbBillNos.has(loc.bill_no)) {
+            combined.push(loc);
+          }
+        }
+        combined.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
+        setSavedOrders(combined);
+        saveStoredInvoices(combined);
       } else if (localInvoices.length > 0) {
         setSavedOrders(localInvoices);
       }

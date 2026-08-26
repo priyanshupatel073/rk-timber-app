@@ -306,18 +306,16 @@ export default function AddReceiptPage({ woodTypes = [] }) {
 
         quickReceiptsFromDb.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
 
-        if (quickReceiptsFromDb.length > 0) {
-          // DB has receipts — DB is authoritative, use it
-          setSavedReceipts(quickReceiptsFromDb);
-          saveStoredReceipts(quickReceiptsFromDb);
-        } else if (localReceipts.length === 0) {
-          // DB confirmed empty AND local is also empty — truly no records
-          setSavedReceipts([]);
-          saveStoredReceipts([]);
+        const dbBillNos = new Set(quickReceiptsFromDb.map(o => o.bill_no));
+        const combined = [...quickReceiptsFromDb];
+        for (const loc of localReceipts) {
+          if (loc.bill_no && !dbBillNos.has(loc.bill_no)) {
+            combined.push(loc);
+          }
         }
-        // If DB returned 0 RCP records but local has some:
-        // DO NOT overwrite — DB may be slow, save may be in-flight, or connection issue.
-        // Keep showing local data until DB confirms the records.
+        combined.sort((a, b) => (new Date(b.order_date || b.created_at || 0)) - (new Date(a.order_date || a.created_at || 0)));
+        setSavedReceipts(combined);
+        saveStoredReceipts(combined);
       }
     } catch (e) {
       console.warn("API fetch fallback for quick receipts:", e);

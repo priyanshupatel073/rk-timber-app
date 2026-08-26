@@ -87,6 +87,9 @@ export default async function handler(req, res) {
         }
         for (const ord of orders) {
           ord.items = itemsByOrder[ord.id] || [];
+          if (ord.order_date) {
+            ord.order_date = String(ord.order_date).split('T')[0];
+          }
         }
       }
 
