@@ -105,10 +105,12 @@ export default function DailyRetailPage() {
 
   const { totalDebit, totalCredit, subAmount } = calculateTotals();
 
-  // Auto-Save Ledger function to MySQL DB & LocalStorage
-  // NOTE: useCallback ensures this always reads fresh state from closure,
-  // preventing the stale-closure bug when called with no arguments from onBlur.
-  const autoSaveLedger = useCallback(async (currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
+  // Auto-Save Ledger — localStorage ONLY (instant, reliable).
+  // DB save only happens on manual "Save to DB" button click.
+  // Reason: Aiven DB has ~1-3s latency. If auto-save was in-flight during
+  // a page refresh, loadDateEntry would see DB returning null and wipe
+  // localStorage — causing entries to disappear on the second refresh.
+  const autoSaveLedger = useCallback((currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
     const calcDebit = currentDebits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcCredit = currentCredits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcSub = calcDebit - calcCredit;
@@ -124,26 +126,9 @@ export default function DailyRetailPage() {
       notes: (currentNotes || '').trim()
     };
 
-    // 1. Immediately persist to localStorage for instant refresh persistence
+    // Save to localStorage immediately — instant, survives refresh
     persistSingleDayLocal(payload);
-
-    try {
-      setAutoSaveStatus('saving');
-      const res = await apiService.saveDailyRetail(payload);
-      if (res && res.success) {
-        if (res.data && res.data.id) {
-          setActiveRecordId(res.data.id);
-          payload.id = res.data.id;
-          persistSingleDayLocal(payload);
-        }
-        setAutoSaveStatus('saved');
-      } else {
-        setAutoSaveStatus('saved');
-      }
-    } catch (err) {
-      console.warn("Auto save backend sync:", err);
-      setAutoSaveStatus('saved');
-    }
+    setAutoSaveStatus('saved');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debitEntries, creditEntries, notes, entryDate, activeRecordId]);
 
@@ -238,27 +223,34 @@ export default function DailyRetailPage() {
         setNotes(data.notes || '');
         persistSingleDayLocal(data);
       } else {
-        // Record does not exist in DB (e.g. deleted from another device or fresh date)
-        // Only clear local cache if there's genuinely nothing in the DB.
-        // Do NOT reset form here if local cache had data — DB may be temporarily
-        // unavailable. Only clear if we have a confirmed null response from DB.
+        // DB returned null — could be because:
+        //  a) Truly new date (no record yet)
+        //  b) Auto-save was still in-flight when user refreshed (Aiven latency)
+        //  c) Temporary DB connectivity issue
+        //
+        // CRITICAL: Only reset form AND clear localStorage if we ALSO have no
+        // local cache. If local cache exists, trust it — DO NOT wipe it.
         if (!cached) {
+          // Truly fresh date — no DB record and no local cache
           setActiveRecordId(null);
           setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
           setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
           setNotes('');
+          // Safe to clean localStorage only for this truly-empty date
+          const cleaned = getStoredDaily().filter(r => r.entry_date !== date);
+          saveStoredDaily(cleaned);
+          setHistoryList(cleaned);
         }
-        const cleaned = getStoredDaily().filter(r => r.entry_date !== date);
-        saveStoredDaily(cleaned);
-        setHistoryList(cleaned);
+        // If cached data exists but DB returns null:
+        // → Keep showing cached entries (form already set from step 1 above)
+        // → DO NOT wipe localStorage — user's data is safe until they manually Save to DB
       }
     } catch (e) {
       console.warn("Load date background fetch error:", e);
       // On network error, keep whatever was loaded from local cache — do NOT reset.
     } finally {
       // Use a small delay to let React batch all the setState calls from above
-      // before re-enabling auto-save. This prevents the auto-save effect from
-      // firing with intermediate/empty state during the load sequence.
+      // before re-enabling auto-save.
       setTimeout(() => {
         isInitialLoad.current = false;
       }, 300);
@@ -506,21 +498,21 @@ export default function DailyRetailPage() {
               display: 'flex', 
               alignItems: 'center', 
               gap: '6px', 
-              background: autoSaveStatus === 'saving' ? '#FEF3C7' : '#ECFDF5', 
+              background: '#ECFDF5', 
               padding: '6px 12px', 
               borderRadius: '8px', 
-              border: `1.5px solid ${autoSaveStatus === 'saving' ? '#FCD34D' : '#A7F3D0'}`,
+              border: '1.5px solid #A7F3D0',
               transition: 'all 0.2s ease'
             }}>
               <span style={{ 
                 width: '8px', 
                 height: '8px', 
                 borderRadius: '50%', 
-                background: autoSaveStatus === 'saving' ? '#F59E0B' : '#10B981',
+                background: '#10B981',
                 display: 'inline-block'
               }} />
-              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: autoSaveStatus === 'saving' ? '#B45309' : '#047857' }}>
-                {autoSaveStatus === 'saving' ? 'Saving to DB...' : 'Auto-saved to DB ✓'}
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#047857' }}>
+                Saved locally ✓
               </span>
             </div>
 
