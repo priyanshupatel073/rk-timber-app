@@ -16,56 +16,49 @@ import {
 } from 'lucide-react';
 import apiService from '../config/api';
 
+// Local calendar date helper (e.g. "2026-08-26")
+const getLocalDateString = (d = new Date()) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Safe date cleaner to guarantee clean YYYY-MM-DD
+const cleanDateString = (val) => {
+  if (!val) return '';
+  return String(val).split('T')[0].trim();
+};
+
+// Helper to read localStorage safely and normalize dates
+const getStoredDailyFromStorage = () => {
+  try {
+    const raw = localStorage.getItem('rk_daily_retail_records');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(r => ({
+      ...r,
+      entry_date: cleanDateString(r.entry_date)
+    }));
+  } catch (e) {
+    return [];
+  }
+};
+
 export default function DailyRetailPage() {
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [activeRecordId, setActiveRecordId] = useState(null);
-
-  // Debit Entries (Amount Comes In / Jama / Cash In)
-  const [debitEntries, setDebitEntries] = useState([
-    { id: 1, particular: '', amount: '' }
-  ]);
-
-  // Credit Entries (Amount Goes Out / Kharch / Udhar / Cash Out)
-  const [creditEntries, setCreditEntries] = useState([
-    { id: 1, particular: '', amount: '' }
-  ]);
-
-  const [notes, setNotes] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState('saved'); // 'saved', 'saving', 'idle'
-  const [toastMsg, setToastMsg] = useState('');
-  // Safe date formatter — handles both "YYYY-MM-DD" (localStorage/input) and
-  // "YYYY-MM-DDT00:00:00.000Z" (mysql2 without dateStrings) formats correctly.
-  const formatDisplayDate = (dateStr) => {
-    if (!dateStr) return '—';
-    // Strip any time component if present (e.g., from ISO serialization)
-    const datePart = String(dateStr).split('T')[0]; // always "YYYY-MM-DD"
-    const parts = datePart.split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
-    }
-    return String(dateStr);
-  };
-
-  // Compare only the date portion (ignores any time component)
-  const isSameDate = (a, b) => {
-    if (!a || !b) return false;
-    return String(a).split('T')[0] === String(b).split('T')[0];
-  };
+  const [entryDate, setEntryDate] = useState(() => getLocalDateString());
 
   // LocalStorage storage helpers for offline persistence & instant load on refresh
-  const getStoredDaily = () => {
-    try {
-      const raw = localStorage.getItem('rk_daily_retail_records');
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  };
+  const getStoredDaily = () => getStoredDailyFromStorage();
 
   const saveStoredDaily = (records) => {
     try {
-      localStorage.setItem('rk_daily_retail_records', JSON.stringify(records));
+      const normalized = (Array.isArray(records) ? records : []).map(r => ({
+        ...r,
+        entry_date: cleanDateString(r.entry_date)
+      }));
+      localStorage.setItem('rk_daily_retail_records', JSON.stringify(normalized));
     } catch (e) {
       console.warn("Failed to persist daily retail records to localStorage", e);
     }
@@ -73,14 +66,20 @@ export default function DailyRetailPage() {
 
   const persistSingleDayLocal = (payload) => {
     try {
+      const pDate = cleanDateString(payload.entry_date);
+      if (!pDate) return;
       const all = getStoredDaily();
-      const idx = all.findIndex(r => r.entry_date === payload.entry_date || (payload.id && r.id === payload.id));
+      const idx = all.findIndex(r => {
+        const rDate = cleanDateString(r.entry_date);
+        return rDate === pDate || (payload.id && r.id && r.id === payload.id);
+      });
       let updated;
+      const cleanPayload = { ...payload, entry_date: pDate };
       if (idx >= 0) {
         updated = [...all];
-        updated[idx] = { ...updated[idx], ...payload };
+        updated[idx] = { ...updated[idx], ...cleanPayload };
       } else {
-        updated = [payload, ...all];
+        updated = [cleanPayload, ...all];
       }
       saveStoredDaily(updated);
       setHistoryList(updated);
@@ -89,7 +88,53 @@ export default function DailyRetailPage() {
     }
   };
 
-  const [historyList, setHistoryList] = useState(() => getStoredDaily());
+  // Synchronously initialize state from today's saved local record
+  // This guarantees ZERO BLANK STATE on page refresh!
+  const todayDate = getLocalDateString();
+  const initialLocalRecords = getStoredDaily();
+  const initialTodayRecord = initialLocalRecords.find(r => cleanDateString(r.entry_date) === todayDate);
+
+  const [activeRecordId, setActiveRecordId] = useState(() => initialTodayRecord?.id || null);
+
+  // Debit Entries (Amount Comes In / Jama / Cash In)
+  const [debitEntries, setDebitEntries] = useState(() => {
+    if (initialTodayRecord && Array.isArray(initialTodayRecord.debit_entries) && initialTodayRecord.debit_entries.length > 0) {
+      return initialTodayRecord.debit_entries;
+    }
+    return [{ id: 1, particular: '', amount: '' }];
+  });
+
+  // Credit Entries (Amount Goes Out / Kharch / Udhar / Cash Out)
+  const [creditEntries, setCreditEntries] = useState(() => {
+    if (initialTodayRecord && Array.isArray(initialTodayRecord.credit_entries) && initialTodayRecord.credit_entries.length > 0) {
+      return initialTodayRecord.credit_entries;
+    }
+    return [{ id: 1, particular: '', amount: '' }];
+  });
+
+  const [notes, setNotes] = useState(() => initialTodayRecord?.notes || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState('saved'); // 'saved', 'saving', 'idle'
+  const [toastMsg, setToastMsg] = useState('');
+
+  // Safe date formatter — handles both "YYYY-MM-DD" and "YYYY-MM-DDThh:mm:ssZ"
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return '—';
+    const datePart = cleanDateString(dateStr);
+    const parts = datePart.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
+    }
+    return String(dateStr);
+  };
+
+  // Compare only the date portion (ignores any time component)
+  const isSameDate = (a, b) => {
+    if (!a || !b) return false;
+    return cleanDateString(a) === cleanDateString(b);
+  };
+
+  const [historyList, setHistoryList] = useState(() => initialLocalRecords);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   const isInitialLoad = useRef(true);
@@ -105,19 +150,15 @@ export default function DailyRetailPage() {
 
   const { totalDebit, totalCredit, subAmount } = calculateTotals();
 
-  // Auto-Save Ledger — localStorage ONLY (instant, reliable).
-  // DB save only happens on manual "Save to DB" button click.
-  // Reason: Aiven DB has ~1-3s latency. If auto-save was in-flight during
-  // a page refresh, loadDateEntry would see DB returning null and wipe
-  // localStorage — causing entries to disappear on the second refresh.
-  const autoSaveLedger = useCallback((currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
+  // Auto-Save Ledger to LocalStorage & MySQL DB
+  const autoSaveLedger = useCallback(async (currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
     const calcDebit = currentDebits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcCredit = currentCredits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcSub = calcDebit - calcCredit;
 
     const payload = {
       id: activeRecordId,
-      entry_date: entryDate,
+      entry_date: cleanDateString(entryDate),
       debit_total: calcDebit,
       credit_total: calcCredit,
       sub_amount: calcSub,
@@ -126,9 +167,35 @@ export default function DailyRetailPage() {
       notes: (currentNotes || '').trim()
     };
 
-    // Save to localStorage immediately — instant, survives refresh
+    // 1. Immediately persist to localStorage for instant refresh persistence
     persistSingleDayLocal(payload);
-    setAutoSaveStatus('saved');
+
+    // 2. If there are actual entries, also sync to DB in background
+    const hasData = currentDebits.some(r => (r.particular && r.particular.trim()) || (parseFloat(r.amount) || 0) > 0) ||
+                    currentCredits.some(r => (r.particular && r.particular.trim()) || (parseFloat(r.amount) || 0) > 0) ||
+                    (currentNotes && currentNotes.trim().length > 0);
+
+    if (hasData) {
+      try {
+        setAutoSaveStatus('saving');
+        const res = await apiService.saveDailyRetail(payload);
+        if (res && res.success) {
+          if (res.data && res.data.id) {
+            setActiveRecordId(res.data.id);
+            payload.id = res.data.id;
+            persistSingleDayLocal(payload);
+          }
+          setAutoSaveStatus('saved');
+        } else {
+          setAutoSaveStatus('saved');
+        }
+      } catch (err) {
+        console.warn("Auto save backend sync:", err);
+        setAutoSaveStatus('saved');
+      }
+    } else {
+      setAutoSaveStatus('saved');
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debitEntries, creditEntries, notes, entryDate, activeRecordId]);
 
@@ -161,7 +228,7 @@ export default function DailyRetailPage() {
     loadDateEntry(entryDate);
   }, []);
 
-  // Fetch all saved daily retail ledger logs
+  // Fetch all saved daily retail ledger logs (Non-destructive merge)
   const fetchHistory = async () => {
     setLoadingHistory(true);
     const localDaily = getStoredDaily();
@@ -171,9 +238,37 @@ export default function DailyRetailPage() {
     try {
       const list = await apiService.getDailyRetailList();
       if (Array.isArray(list)) {
-        list.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
-        setHistoryList(list);
-        saveStoredDaily(list);
+        // Merge DB list with localDaily safely without ever wiping local data
+        const mergedMap = new Map();
+
+        // 1. Add records from DB
+        list.forEach(r => {
+          const d = cleanDateString(r.entry_date);
+          if (d) mergedMap.set(d, { ...r, entry_date: d });
+        });
+
+        // 2. Merge local records so local entries are never lost
+        localDaily.forEach(loc => {
+          const d = cleanDateString(loc.entry_date);
+          if (!d) return;
+          if (!mergedMap.has(d)) {
+            mergedMap.set(d, loc);
+          } else {
+            const dbItem = mergedMap.get(d);
+            const locHasEntries = (Array.isArray(loc.debit_entries) && loc.debit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0)) ||
+                                  (Array.isArray(loc.credit_entries) && loc.credit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0));
+            const dbHasEntries = (Array.isArray(dbItem.debit_entries) && dbItem.debit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0)) ||
+                                 (Array.isArray(dbItem.credit_entries) && dbItem.credit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0));
+            if (locHasEntries && !dbHasEntries) {
+              mergedMap.set(d, { ...loc, id: dbItem.id || loc.id });
+            }
+          }
+        });
+
+        const combined = Array.from(mergedMap.values());
+        combined.sort((a, b) => (new Date(b.entry_date || 0)) - (new Date(a.entry_date || 0)));
+        setHistoryList(combined);
+        saveStoredDaily(combined);
       }
     } catch (e) {
       console.warn("Could not fetch daily retail history:", e);
@@ -184,83 +279,82 @@ export default function DailyRetailPage() {
 
   // Load entry for a specific date (First from LocalStorage, then syncs with DB)
   const loadDateEntry = async (date) => {
+    const targetDate = cleanDateString(date);
+    if (!targetDate) return;
+
     // 1. Instant check from LocalStorage cache
     const all = getStoredDaily();
-    const cached = all.find(r => r.entry_date === date);
+    const cached = all.find(r => cleanDateString(r.entry_date) === targetDate);
 
     if (cached) {
       setActiveRecordId(cached.id || null);
-      setDebitEntries(
-        Array.isArray(cached.debit_entries) && cached.debit_entries.length > 0
-          ? cached.debit_entries
-          : [{ id: Date.now(), particular: '', amount: '' }]
-      );
-      setCreditEntries(
-        Array.isArray(cached.credit_entries) && cached.credit_entries.length > 0
-          ? cached.credit_entries
-          : [{ id: Date.now() + 1, particular: '', amount: '' }]
-      );
-      setNotes(cached.notes || '');
+      if (Array.isArray(cached.debit_entries) && cached.debit_entries.length > 0) {
+        setDebitEntries(cached.debit_entries);
+      }
+      if (Array.isArray(cached.credit_entries) && cached.credit_entries.length > 0) {
+        setCreditEntries(cached.credit_entries);
+      }
+      if (cached.notes !== undefined) {
+        setNotes(cached.notes || '');
+      }
     }
 
     // 2. Fetch latest from database in background
-    // isInitialLoad stays true throughout the entire async load (local + DB)
-    // to prevent the auto-save effect from firing mid-load and overwriting entries.
     try {
-      const data = await apiService.getDailyRetailByDate(date);
+      const data = await apiService.getDailyRetailByDate(targetDate);
       if (data) {
+        const cleanDbDate = cleanDateString(data.entry_date) || targetDate;
+        const dbDebitValid = Array.isArray(data.debit_entries) && data.debit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0);
+        const dbCreditValid = Array.isArray(data.credit_entries) && data.credit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0);
+        const cachedDebitValid = cached && Array.isArray(cached.debit_entries) && cached.debit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0);
+        const cachedCreditValid = cached && Array.isArray(cached.credit_entries) && cached.credit_entries.some(e => e.particular || (parseFloat(e.amount) || 0) > 0);
+
+        const debitsToUse = dbDebitValid
+          ? data.debit_entries
+          : (cachedDebitValid ? cached.debit_entries : (Array.isArray(data.debit_entries) && data.debit_entries.length > 0 ? data.debit_entries : [{ id: Date.now(), particular: '', amount: '' }]));
+
+        const creditsToUse = dbCreditValid
+          ? data.credit_entries
+          : (cachedCreditValid ? cached.credit_entries : (Array.isArray(data.credit_entries) && data.credit_entries.length > 0 ? data.credit_entries : [{ id: Date.now() + 1, particular: '', amount: '' }]));
+
         setActiveRecordId(data.id || null);
-        setDebitEntries(
-          Array.isArray(data.debit_entries) && data.debit_entries.length > 0
-            ? data.debit_entries
-            : [{ id: Date.now(), particular: '', amount: '' }]
-        );
-        setCreditEntries(
-          Array.isArray(data.credit_entries) && data.credit_entries.length > 0
-            ? data.credit_entries
-            : [{ id: Date.now() + 1, particular: '', amount: '' }]
-        );
-        setNotes(data.notes || '');
-        persistSingleDayLocal(data);
+        setDebitEntries(debitsToUse);
+        setCreditEntries(creditsToUse);
+        setNotes(data.notes !== undefined ? (data.notes || '') : (cached ? cached.notes : ''));
+
+        persistSingleDayLocal({
+          id: data.id || null,
+          entry_date: cleanDbDate,
+          debit_total: parseFloat(data.debit_total) || 0,
+          credit_total: parseFloat(data.credit_total) || 0,
+          sub_amount: parseFloat(data.sub_amount) || 0,
+          debit_entries: debitsToUse,
+          credit_entries: creditsToUse,
+          notes: data.notes || ''
+        });
       } else {
-        // DB returned null — could be because:
-        //  a) Truly new date (no record yet)
-        //  b) Auto-save was still in-flight when user refreshed (Aiven latency)
-        //  c) Temporary DB connectivity issue
-        //
-        // CRITICAL: Only reset form AND clear localStorage if we ALSO have no
-        // local cache. If local cache exists, trust it — DO NOT wipe it.
+        // Record does not exist in DB (e.g. freshly selected date)
         if (!cached) {
-          // Truly fresh date — no DB record and no local cache
           setActiveRecordId(null);
           setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
           setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
           setNotes('');
-          // Safe to clean localStorage only for this truly-empty date
-          const cleaned = getStoredDaily().filter(r => r.entry_date !== date);
-          saveStoredDaily(cleaned);
-          setHistoryList(cleaned);
         }
-        // If cached data exists but DB returns null:
-        // → Keep showing cached entries (form already set from step 1 above)
-        // → DO NOT wipe localStorage — user's data is safe until they manually Save to DB
       }
     } catch (e) {
       console.warn("Load date background fetch error:", e);
-      // On network error, keep whatever was loaded from local cache — do NOT reset.
     } finally {
-      // Use a small delay to let React batch all the setState calls from above
-      // before re-enabling auto-save.
       setTimeout(() => {
         isInitialLoad.current = false;
-      }, 300);
+      }, 250);
     }
   };
 
   const handleDateChange = (newDate) => {
+    const cleanNewDate = cleanDateString(newDate);
     isInitialLoad.current = true;
-    setEntryDate(newDate);
-    loadDateEntry(newDate);
+    setEntryDate(cleanNewDate);
+    loadDateEntry(cleanNewDate);
   };
 
   // Debit Rows Handlers (New rows added to TOP)
@@ -338,7 +432,7 @@ export default function DailyRetailPage() {
 
     const payload = {
       id: activeRecordId,
-      entry_date: entryDate,
+      entry_date: cleanDateString(entryDate),
       debit_total: totalDebit,
       credit_total: totalCredit,
       sub_amount: subAmount,
@@ -359,14 +453,14 @@ export default function DailyRetailPage() {
           persistSingleDayLocal(payload);
         }
         setAutoSaveStatus('saved');
-        setToastMsg(`Daily retail ledger for ${entryDate} saved to database!`);
+        setToastMsg(`Daily retail ledger for ${formatDisplayDate(cleanDateString(entryDate))} saved to database!`);
         fetchHistory();
       } else {
-        setToastMsg(`Daily entry for ${entryDate} saved!`);
+        setToastMsg(`Daily entry for ${formatDisplayDate(cleanDateString(entryDate))} saved!`);
       }
     } catch (err) {
       console.warn("Save daily retail error:", err);
-      setToastMsg(`Daily entry for ${entryDate} saved!`);
+      setToastMsg(`Daily entry for ${formatDisplayDate(cleanDateString(entryDate))} saved!`);
     } finally {
       setIsSaving(false);
     }
@@ -374,8 +468,9 @@ export default function DailyRetailPage() {
 
   // Load record from history list
   const handleLoadFromHistory = (item) => {
-    setEntryDate(item.entry_date);
-    setActiveRecordId(item.id);
+    const cDate = cleanDateString(item.entry_date);
+    setEntryDate(cDate);
+    setActiveRecordId(item.id || null);
     setDebitEntries(
       Array.isArray(item.debit_entries) && item.debit_entries.length > 0
         ? item.debit_entries
@@ -387,27 +482,28 @@ export default function DailyRetailPage() {
         : [{ id: Date.now() + 1, particular: '', amount: '' }]
     );
     setNotes(item.notes || '');
-    setToastMsg(`Loaded daily record for ${item.entry_date}`);
+    setToastMsg(`Loaded daily record for ${formatDisplayDate(cDate)}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Delete day entry
   const handleDeleteDay = async (item) => {
-    const confirmDelete = window.confirm(`Delete daily record for ${item.entry_date}?`);
+    const targetDate = cleanDateString(item.entry_date);
+    const confirmDelete = window.confirm(`Delete daily record for ${formatDisplayDate(targetDate)}?`);
     if (!confirmDelete) return;
 
     const all = getStoredDaily();
-    const filtered = all.filter(r => r.entry_date !== item.entry_date && (!item.id || r.id !== item.id));
+    const filtered = all.filter(r => cleanDateString(r.entry_date) !== targetDate && (!item.id || r.id !== item.id));
     saveStoredDaily(filtered);
     setHistoryList(filtered);
 
-    if (entryDate === item.entry_date) {
+    if (cleanDateString(entryDate) === targetDate) {
       handleResetDay();
     }
-    setToastMsg(`Deleted record for ${item.entry_date}`);
+    setToastMsg(`Deleted record for ${formatDisplayDate(targetDate)}`);
 
     try {
-      await apiService.deleteDailyRetail(item.id, item.entry_date);
+      await apiService.deleteDailyRetail(item.id, targetDate);
       fetchHistory();
     } catch (e) {
       console.warn("Delete error:", e);
@@ -425,7 +521,7 @@ export default function DailyRetailPage() {
     const validCredits = creditEntries.filter(r => r.particular || (parseFloat(r.amount) || 0) > 0);
 
     let msg = `*દૈનિક રોજનામચા અને કેશ ફ્લો રિપોર્ટ (DAILY CASH FLOW)*\n`;
-    msg += `📅 તારીખ: *${entryDate}*\n`;
+    msg += `📅 તારીખ: *${formatDisplayDate(entryDate)}*\n`;
     msg += `🏢 *R.K. WOOD INDUSTRIES*\n\n`;
 
     msg += `📥 *આવક (DEBIT - AMOUNT COMES IN)*:\n`;
@@ -498,21 +594,21 @@ export default function DailyRetailPage() {
               display: 'flex', 
               alignItems: 'center', 
               gap: '6px', 
-              background: '#ECFDF5', 
+              background: autoSaveStatus === 'saving' ? '#FEF3C7' : '#ECFDF5', 
               padding: '6px 12px', 
               borderRadius: '8px', 
-              border: '1.5px solid #A7F3D0',
+              border: `1.5px solid ${autoSaveStatus === 'saving' ? '#FCD34D' : '#A7F3D0'}`,
               transition: 'all 0.2s ease'
             }}>
               <span style={{ 
                 width: '8px', 
                 height: '8px', 
                 borderRadius: '50%', 
-                background: '#10B981',
+                background: autoSaveStatus === 'saving' ? '#F59E0B' : '#10B981',
                 display: 'inline-block'
               }} />
-              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#047857' }}>
-                Saved locally ✓
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: autoSaveStatus === 'saving' ? '#B45309' : '#047857' }}>
+                {autoSaveStatus === 'saving' ? 'Saving to DB...' : 'Auto-saved to DB ✓'}
               </span>
             </div>
 

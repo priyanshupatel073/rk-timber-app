@@ -14,9 +14,11 @@ export default async function handler(req, res) {
       const { date, id } = req.query;
 
       if (date) {
-        const [rows] = await pool.query('SELECT * FROM daily_retail WHERE entry_date = ? LIMIT 1', [date]);
+        const cleanDate = String(date).split('T')[0];
+        const [rows] = await pool.query('SELECT * FROM daily_retail WHERE entry_date = ? LIMIT 1', [cleanDate]);
         if (rows.length > 0) {
           const row = rows[0];
+          if (row.entry_date) row.entry_date = String(row.entry_date).split('T')[0];
           try { row.debit_entries = typeof row.debit_entries === 'string' ? JSON.parse(row.debit_entries) : (row.debit_entries || []); } catch (e) { row.debit_entries = []; }
           try { row.credit_entries = typeof row.credit_entries === 'string' ? JSON.parse(row.credit_entries) : (row.credit_entries || []); } catch (e) { row.credit_entries = []; }
           return res.status(200).json({ status: 'success', data: row });
@@ -28,6 +30,7 @@ export default async function handler(req, res) {
         const [rows] = await pool.query('SELECT * FROM daily_retail WHERE id = ? LIMIT 1', [parseInt(id, 10)]);
         if (rows.length > 0) {
           const row = rows[0];
+          if (row.entry_date) row.entry_date = String(row.entry_date).split('T')[0];
           try { row.debit_entries = typeof row.debit_entries === 'string' ? JSON.parse(row.debit_entries) : (row.debit_entries || []); } catch (e) { row.debit_entries = []; }
           try { row.credit_entries = typeof row.credit_entries === 'string' ? JSON.parse(row.credit_entries) : (row.credit_entries || []); } catch (e) { row.credit_entries = []; }
           return res.status(200).json({ status: 'success', data: row });
@@ -37,6 +40,7 @@ export default async function handler(req, res) {
 
       const [rows] = await pool.query('SELECT * FROM daily_retail ORDER BY entry_date DESC');
       for (const row of rows) {
+        if (row.entry_date) row.entry_date = String(row.entry_date).split('T')[0];
         try { row.debit_entries = typeof row.debit_entries === 'string' ? JSON.parse(row.debit_entries) : (row.debit_entries || []); } catch (e) { row.debit_entries = []; }
         try { row.credit_entries = typeof row.credit_entries === 'string' ? JSON.parse(row.credit_entries) : (row.credit_entries || []); } catch (e) { row.credit_entries = []; }
       }
@@ -51,6 +55,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ status: 'error', message: 'Valid entry_date is required.' });
       }
 
+      const cleanDate = String(entry_date).split('T')[0];
       const dTotal = parseFloat(debit_total) || 0;
       const cTotal = parseFloat(credit_total) || 0;
       const subAmt = parseFloat(sub_amount) || (dTotal - cTotal);
@@ -58,7 +63,7 @@ export default async function handler(req, res) {
       const cEntries = JSON.stringify(Array.isArray(credit_entries) ? credit_entries : []);
       const noteStr = notes ? String(notes).trim() : '';
 
-      const [existing] = await pool.query('SELECT id FROM daily_retail WHERE entry_date = ? LIMIT 1', [entry_date]);
+      const [existing] = await pool.query('SELECT id FROM daily_retail WHERE entry_date = ? LIMIT 1', [cleanDate]);
 
       let recordId;
       if (existing.length > 0) {
@@ -70,17 +75,17 @@ export default async function handler(req, res) {
       } else {
         const [insertRes] = await pool.query(
           `INSERT INTO daily_retail (entry_date, debit_total, credit_total, sub_amount, debit_entries, credit_entries, notes) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [entry_date, dTotal, cTotal, subAmt, dEntries, cEntries, noteStr]
+          [cleanDate, dTotal, cTotal, subAmt, dEntries, cEntries, noteStr]
         );
         recordId = insertRes.insertId;
       }
 
       return res.status(200).json({
         status: 'success',
-        message: `Daily retail ledger for ${entry_date} saved successfully.`,
+        message: `Daily retail ledger for ${cleanDate} saved successfully.`,
         data: {
           id: recordId,
-          entry_date,
+          entry_date: cleanDate,
           debit_total: dTotal,
           credit_total: cTotal,
           sub_amount: subAmt
