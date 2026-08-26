@@ -9,6 +9,7 @@ const pool = mysql.createPool({
   ssl: {
     rejectUnauthorized: false
   },
+  dateStrings: true,       // Return DATE/DATETIME as "YYYY-MM-DD" strings, not JS Date objects
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0

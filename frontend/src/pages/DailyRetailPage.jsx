@@ -5,7 +5,6 @@ import {
   Plus, 
   Trash2, 
   Save, 
-  RotateCcw, 
   CheckCircle2, 
   Calendar, 
   FileText, 
@@ -13,8 +12,6 @@ import {
   MessageSquare, 
   Edit, 
   Wallet, 
-  TrendingUp, 
-  TrendingDown, 
   RefreshCw 
 } from 'lucide-react';
 import apiService from '../config/api';
@@ -37,6 +34,25 @@ export default function DailyRetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState('saved'); // 'saved', 'saving', 'idle'
   const [toastMsg, setToastMsg] = useState('');
+  // Safe date formatter — handles both "YYYY-MM-DD" (localStorage/input) and
+  // "YYYY-MM-DDT00:00:00.000Z" (mysql2 without dateStrings) formats correctly.
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return '—';
+    // Strip any time component if present (e.g., from ISO serialization)
+    const datePart = String(dateStr).split('T')[0]; // always "YYYY-MM-DD"
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
+    }
+    return String(dateStr);
+  };
+
+  // Compare only the date portion (ignores any time component)
+  const isSameDate = (a, b) => {
+    if (!a || !b) return false;
+    return String(a).split('T')[0] === String(b).split('T')[0];
+  };
+
   // LocalStorage storage helpers for offline persistence & instant load on refresh
   const getStoredDaily = () => {
     try {
@@ -90,7 +106,9 @@ export default function DailyRetailPage() {
   const { totalDebit, totalCredit, subAmount } = calculateTotals();
 
   // Auto-Save Ledger function to MySQL DB & LocalStorage
-  const autoSaveLedger = async (currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
+  // NOTE: useCallback ensures this always reads fresh state from closure,
+  // preventing the stale-closure bug when called with no arguments from onBlur.
+  const autoSaveLedger = useCallback(async (currentDebits = debitEntries, currentCredits = creditEntries, currentNotes = notes) => {
     const calcDebit = currentDebits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcCredit = currentCredits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
     const calcSub = calcDebit - calcCredit;
@@ -126,7 +144,8 @@ export default function DailyRetailPage() {
       console.warn("Auto save backend sync:", err);
       setAutoSaveStatus('saved');
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debitEntries, creditEntries, notes, entryDate, activeRecordId]);
 
   // Debounced auto-save whenever debitEntries, creditEntries, or notes change
   useEffect(() => {
@@ -200,6 +219,8 @@ export default function DailyRetailPage() {
     }
 
     // 2. Fetch latest from database in background
+    // isInitialLoad stays true throughout the entire async load (local + DB)
+    // to prevent the auto-save effect from firing mid-load and overwriting entries.
     try {
       const data = await apiService.getDailyRetailByDate(date);
       if (data) {
@@ -218,20 +239,29 @@ export default function DailyRetailPage() {
         persistSingleDayLocal(data);
       } else {
         // Record does not exist in DB (e.g. deleted from another device or fresh date)
-        setActiveRecordId(null);
-        setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
-        setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
-        setNotes('');
+        // Only clear local cache if there's genuinely nothing in the DB.
+        // Do NOT reset form here if local cache had data — DB may be temporarily
+        // unavailable. Only clear if we have a confirmed null response from DB.
+        if (!cached) {
+          setActiveRecordId(null);
+          setDebitEntries([{ id: Date.now(), particular: '', amount: '' }]);
+          setCreditEntries([{ id: Date.now() + 1, particular: '', amount: '' }]);
+          setNotes('');
+        }
         const cleaned = getStoredDaily().filter(r => r.entry_date !== date);
         saveStoredDaily(cleaned);
         setHistoryList(cleaned);
       }
     } catch (e) {
       console.warn("Load date background fetch error:", e);
+      // On network error, keep whatever was loaded from local cache — do NOT reset.
     } finally {
+      // Use a small delay to let React batch all the setState calls from above
+      // before re-enabling auto-save. This prevents the auto-save effect from
+      // firing with intermediate/empty state during the load sequence.
       setTimeout(() => {
         isInitialLoad.current = false;
-      }, 150);
+      }, 300);
     }
   };
 
@@ -505,16 +535,6 @@ export default function DailyRetailPage() {
               />
             </div>
 
-            <button 
-              type="button" 
-              className="btn btn-secondary btn-sm"
-              onClick={handleResetDay}
-              title="Reset today's inputs"
-              style={{ fontWeight: 700 }}
-            >
-              <RotateCcw size={15} />
-              <span>Reset</span>
-            </button>
 
             <button 
               type="button" 
@@ -582,7 +602,7 @@ export default function DailyRetailPage() {
                       placeholder="વિગત / Particulars (e.g. Counter Cash Sale / Customer Payment)..."
                       value={row.particular}
                       onChange={(e) => handleUpdateDebitRow(row.id, 'particular', e.target.value)}
-                      onBlur={() => autoSaveLedger()}
+                      onBlur={() => autoSaveLedger(debitEntries, creditEntries, notes)}
                     />
 
                     <button 
@@ -606,7 +626,7 @@ export default function DailyRetailPage() {
                       placeholder="0.00"
                       value={row.amount}
                       onChange={(e) => handleUpdateDebitRow(row.id, 'amount', e.target.value)}
-                      onBlur={() => autoSaveLedger()}
+                      onBlur={() => autoSaveLedger(debitEntries, creditEntries, notes)}
                     />
                     <span style={{ position: 'absolute', left: '10px', top: '12px', fontSize: '1.05rem', fontWeight: 900, color: '#059669' }}>₹</span>
                   </div>
@@ -673,7 +693,7 @@ export default function DailyRetailPage() {
                       placeholder="વિગત / Particulars (e.g. Driver Diesel / Labor Wages / Supplies)..."
                       value={row.particular}
                       onChange={(e) => handleUpdateCreditRow(row.id, 'particular', e.target.value)}
-                      onBlur={() => autoSaveLedger()}
+                      onBlur={() => autoSaveLedger(debitEntries, creditEntries, notes)}
                     />
 
                     <button 
@@ -697,7 +717,7 @@ export default function DailyRetailPage() {
                       placeholder="0.00"
                       value={row.amount}
                       onChange={(e) => handleUpdateCreditRow(row.id, 'amount', e.target.value)}
-                      onBlur={() => autoSaveLedger()}
+                      onBlur={() => autoSaveLedger(debitEntries, creditEntries, notes)}
                     />
                     <span style={{ position: 'absolute', left: '10px', top: '12px', fontSize: '1.05rem', fontWeight: 900, color: '#E11D48' }}>₹</span>
                   </div>
@@ -776,7 +796,7 @@ export default function DailyRetailPage() {
                 placeholder="દા.ત. હિસાબ ચકાસાયેલ છે"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => autoSaveLedger()}
+                onBlur={() => autoSaveLedger(debitEntries, creditEntries, notes)}
               />
             </div>
 
@@ -866,12 +886,12 @@ export default function DailyRetailPage() {
               ) : historyList.length > 0 ? (
                 historyList.map((rec) => {
                   const subAmt = parseFloat(rec.sub_amount || 0);
-                  const isCurrent = entryDate === rec.entry_date;
+                  const isCurrent = isSameDate(entryDate, rec.entry_date);
                   return (
                     <tr key={rec.id || rec.entry_date} style={{ borderBottom: '1px solid #F1F5F9', background: isCurrent ? '#F0FDF4' : 'transparent' }}>
                       <td>
                         <strong className="font-mono" style={{ color: '#1E1B4B', fontWeight: 800 }}>
-                          {rec.entry_date ? rec.entry_date.split('-').reverse().join('/') : '—'}
+                          {formatDisplayDate(rec.entry_date)}
                         </strong>
                         {isCurrent && <span style={{ marginLeft: '6px', fontSize: '0.7rem', background: '#DCFCE7', color: '#15803D', padding: '1px 6px', borderRadius: '4px', fontWeight: 800 }}>Active</span>}
                       </td>
@@ -928,11 +948,11 @@ export default function DailyRetailPage() {
             historyList.map((rec) => {
               const subAmt = parseFloat(rec.sub_amount || 0);
               return (
-                <div key={rec.id || rec.entry_date} className={`mobile-invoice-card ${entryDate === rec.entry_date ? 'active-editing' : ''}`}>
+                <div key={rec.id || rec.entry_date} className={`mobile-invoice-card ${isSameDate(entryDate, rec.entry_date) ? 'active-editing' : ''}`}>
                   <div className="mobile-invoice-card-header">
                     <div>
                       <strong className="font-mono" style={{ color: '#1E1B4B', fontSize: '0.94rem' }}>
-                        📅 {rec.entry_date ? rec.entry_date.split('-').reverse().join('/') : '—'}
+                        📅 {formatDisplayDate(rec.entry_date)}
                       </strong>
                     </div>
                     <span 
