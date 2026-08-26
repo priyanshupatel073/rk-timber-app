@@ -26,7 +26,7 @@ import { numberToWordsIndian } from '../utils/numberToWords';
 // Helper to check if a date string matches a YYYY-MM month
 const isDateInMonth = (dateVal, targetMonth) => {
   if (!dateVal || !targetMonth) return true;
-  const str = String(dateVal).trim();
+  const str = String(dateVal).split('T')[0].trim(); // normalize ISO dates
   if (str.startsWith(targetMonth)) return true;
   const parts = str.split(/[-/]/);
   if (parts.length === 3) {
@@ -40,11 +40,28 @@ const isDateInMonth = (dateVal, targetMonth) => {
   }
   const d = new Date(dateVal);
   if (!isNaN(d.getTime())) {
-    const yStr = d.getFullYear();
-    const mStr = String(d.getMonth() + 1).padStart(2, '0');
+    const yStr = d.getUTCFullYear();
+    const mStr = String(d.getUTCMonth() + 1).padStart(2, '0');
     if (`${yStr}-${mStr}` === targetMonth) return true;
   }
   return false;
+};
+
+// Safe date display formatter: handles "YYYY-MM-DD" and "YYYY-MM-DDThh:mm:ssZ"
+const formatDisplayDate = (dateVal) => {
+  if (!dateVal) return '—';
+  const datePart = String(dateVal).split('T')[0]; // strip time component
+  const parts = datePart.split('-');
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
+  }
+  return String(dateVal);
+};
+
+// Normalize a date value to plain "YYYY-MM-DD" for use in <input type="date">
+const normalizeDateForInput = (dateVal) => {
+  if (!dateVal) return new Date().toISOString().split('T')[0];
+  return String(dateVal).split('T')[0]; // strips any time/timezone suffix
 };
 
 // Helper to purge incremental typing fragments (e.g. 'N', 'NE', 'NEE' when 'NEEM' exists)
@@ -465,6 +482,8 @@ export default function AddReceiptPage({ woodTypes = [] }) {
         saveStoredReceipts(syncedList);
         setSavedReceipts(syncedList);
       }
+      // Always refresh from DB after save so view mode is in sync
+      fetchSavedReceipts();
     } catch (err) {
       console.log("Database sync offline, quick receipt recorded locally.");
     } finally {
@@ -476,7 +495,8 @@ export default function AddReceiptPage({ woodTypes = [] }) {
   const handleLoadReceipt = (rec) => {
     setEditingReceiptId(rec.id);
     setReceiptNo(rec.bill_no || `RCP-${Date.now()}`);
-    setReceiptDate(rec.order_date || new Date().toISOString().split('T')[0]);
+    // Normalize date: DB may return "YYYY-MM-DDT00:00:00.000Z", strip time for <input type="date">
+    setReceiptDate(normalizeDateForInput(rec.order_date));
     setCustomerName(rec.customer_name || '');
     setCustomerPhone(rec.customer_phone || '');
     setCuttingCharges(parseFloat(rec.cutting_charges || 0));
@@ -1334,7 +1354,7 @@ export default function AddReceiptPage({ woodTypes = [] }) {
                       </strong>
                     </td>
                     <td style={{ color: '#475569', fontSize: '0.82rem' }}>
-                      {rec.order_date ? rec.order_date.split('-').reverse().join('/') : '—'}
+                      {formatDisplayDate(rec.order_date)}
                     </td>
                     <td style={{ fontWeight: 700, color: '#0F172A', textTransform: 'uppercase' }}>
                       {rec.customer_name}
@@ -1464,7 +1484,7 @@ export default function AddReceiptPage({ woodTypes = [] }) {
                       {rec.bill_no}
                     </strong>
                     <span style={{ fontSize: '0.76rem', color: '#64748B', display: 'block' }}>
-                      {rec.order_date ? rec.order_date.split('-').reverse().join('/') : '—'}
+                      {formatDisplayDate(rec.order_date)}
                     </span>
                   </div>
                   <select 
